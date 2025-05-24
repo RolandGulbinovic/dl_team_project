@@ -143,21 +143,26 @@ id_to_prompt = {
     40: "another object"
 }
 id_to_prompt.keys()
+import h5py
+import numpy as np
+from PIL import Image
+from torch.utils.data import Dataset
+
 class ClipSegHypersimDataset(Dataset):
     def __init__(self, sample_paths, class_ids=None, transform=None, target_transform=None):
         self.sample_entries = []
         self.transform = transform
         self.target_transform = target_transform
 
-        if class_ids is None:
-            self.class_ids = list(class_ids.keys())
+        # Store class ID to prompt mapping
+        self.class_id_to_prompt = class_ids or {}
 
         for color_path, semantic_path in sample_paths:
             with h5py.File(semantic_path, 'r') as f_sem:
                 mask = np.array(f_sem['dataset'])
 
             unique_ids = np.unique(mask)
-            valid_ids = [cid for cid in unique_ids if cid in class_ids]
+            valid_ids = [cid for cid in unique_ids if cid in self.class_id_to_prompt]
 
             for class_id in valid_ids:
                 self.sample_entries.append((color_path, semantic_path, class_id))
@@ -174,6 +179,7 @@ class ClipSegHypersimDataset(Dataset):
         with h5py.File(semantic_path, 'r') as f_sem:
             mask = np.array(f_sem['dataset'])
 
+        # Normalize to uint8 RGB image
         rgb_disp = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
         binary_mask = (mask == class_id).astype(np.uint8) * 255
 
@@ -185,8 +191,9 @@ class ClipSegHypersimDataset(Dataset):
         if self.target_transform:
             mask_img = self.target_transform(mask_img)
 
-        prompt = class_ids[class_id]
+        prompt = self.class_id_to_prompt[class_id]
         return img, mask_img, prompt
+
 
 
 #Checking if prompts,Image and Mask match
