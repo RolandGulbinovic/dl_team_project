@@ -235,8 +235,9 @@ def inspect_sample(dataset, idx):
 
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
 from torchvision.transforms.functional import to_pil_image
-processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
-model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined")
+
+processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd16")
+model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd16")
 model.eval()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
@@ -258,6 +259,12 @@ _15id_to_prompt = {
     13: "blinds",
     14: "a desk",
     15: "shelves"}
+
+_3id_to_prompt = {
+    2: "the floor",
+    4: "a bed",
+    5: "a chair",
+    7: "a table"}
 
 def limit_dataset_per_class(sample_paths, class_ids, limit=50):
     """
@@ -281,7 +288,7 @@ def limit_dataset_per_class(sample_paths, class_ids, limit=50):
 
     return limited_paths
 
-selected_class_ids = list(_15id_to_prompt.keys())  # 15 classes
+selected_class_ids = list(_3id_to_prompt.keys())  # 15 classes
 #Limit number of smaples per class, I got 30
 sample_paths_limited = limit_dataset_per_class(sample_paths, selected_class_ids, limit=30)
 
@@ -297,7 +304,7 @@ target_transform = transforms.Compose([
 ])
 filtered_dataset = ClipSegHypersimDataset(
     sample_paths=sample_paths_limited,
-    class_ids=_15id_to_prompt,
+    class_ids=_3id_to_prompt,
     transform=transform,
     target_transform=target_transform
 )
@@ -305,44 +312,74 @@ filtered_dataset = ClipSegHypersimDataset(
 #Inspect some sample if their Prompt,Mask and Image match
 img,mask,prompt = filtered_dataset[0]
 mask.shape
-for i in [1,5,300,6,500]:
+for i in [53]:
     inspect_sample(filtered_dataset, i)
 
 
+path = r"C:\Users\dania\Deep_learning\dl_team_project\Plots"
 
-def visualize(model, prompt, img):
+def visualize(model, prompt, img, threshold=None, save_dir=path, base_filename="output"):
+    # Convert image to PIL
     img_pil = to_pil_image(img)
-     # Tokenize & prepare input
+
+    # Prepare input
     inputs = processor(text=[prompt], images=[img_pil], return_tensors="pt").to(device)
+
+    # Inference
     with torch.no_grad():
         outputs = model(**inputs)
-        logits = outputs.logits  # shape: [1, 352, 352]
-        pred_mask = logits[0]  # shape: [352, 352]
-        pred_mask = pred_mask.sigmoid().cpu().numpy()
-        threshold = 0.5
-        binary_mask = (pred_mask > threshold).astype(np.uint8) * 255
+        pred_mask = outputs.logits[0].sigmoid().cpu().numpy()
 
+        # Threshold
+        if threshold is None:
+            binary_mask = (pred_mask * 255).astype(np.uint8)
+        else:
+            binary_mask = (pred_mask > threshold).astype(np.uint8) * 255
+
+    # Convert image tensor to NumPy
     img_np = img.permute(1, 2, 0).cpu().numpy()
     img_np = (img_np * 255).astype(np.uint8)
 
+    # === Show with bright green overlay ===
     plt.figure(figsize=(10, 4))
-
     plt.subplot(1, 2, 1)
     plt.imshow(img_np)
-    plt.title("Image")
+    plt.title("Original Image")
     plt.axis("off")
 
     plt.subplot(1, 2, 2)
-    plt.imshow(binary_mask, cmap="gray")
-    plt.title(f"Prediction: {prompt}")
+    plt.imshow(img_np)
+    plt.imshow(binary_mask, cmap='Greens', alpha=0.6)  # Higher alpha
+    plt.title(f"Bright Green Mask: {prompt}")
     plt.axis("off")
-
     plt.tight_layout()
     plt.show()
 
-img, mask, prompt = filtered_dataset[400]
+    # === Save image and overlay ===
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save original image
+        image_path = os.path.join(save_dir, f"{base_filename}_image.png")
+        Image.fromarray(img_np).save(image_path)
+        print(f"[✓] Image saved to: {image_path}")
+
+        # Create bright green overlay
+        green_mask = np.zeros_like(img_np)
+        green_mask[..., 1] = binary_mask  # green channel
+
+        # Brighten it by increasing the blend ratio
+        overlay = np.clip(img_np * 0.4 + green_mask * 0.6, 0, 255).astype(np.uint8)
+
+        mask_path = os.path.join(save_dir, f"{base_filename}_mask_green.png")
+        Image.fromarray(overlay).save(mask_path)
+        print(f"[✓] Bright green mask saved to: {mask_path}")
+
+
+img, mask, prompt = filtered_dataset[50]
 #Input to one of the models and check the output
-visualize(model,"floor",img)
+visualize(model,"Chair and Table",img,threshold = 0.3)
+
 #______________________Calculating_Metrics________________________
 model_name = "CIDAS/clipseg-rd64-refined"
 processor = CLIPSegProcessor.from_pretrained(model_name)
